@@ -8,6 +8,8 @@ Examples::
     nano3ble status
     nano3ble wifi-scan
     nano3ble set-wifi --ssid "MyNetwork" --password "hunter2"
+    nano3ble dashboard 192.168.1.175
+    nano3ble dashboard                   # auto-discover IP via BLE
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import logging
 import sys
 
 from . import __version__
+from .dashboard import open_dashboard
 from .device import DeviceStatus, Nano3s, scan_devices
 
 
@@ -103,6 +106,31 @@ async def _cmd_set_wifi(args: argparse.Namespace) -> int:
         return 1
 
 
+async def _cmd_dashboard(args: argparse.Namespace) -> int:
+    ip = args.ip
+
+    # If no IP given, try to discover it via BLE status
+    if ip is None:
+        print("No IP specified — looking up via BLE…")
+        try:
+            async with await Nano3s.connect(
+                device_name=args.device, timeout=args.timeout
+            ) as miner:
+                status = await miner.get_status()
+                if not status.ip:
+                    print("Miner is not connected to WiFi (no IP).")
+                    return 1
+                ip = status.ip
+                print(f"Discovered miner IP: {ip}")
+        except RuntimeError as exc:
+            print(f"BLE discovery failed: {exc}")
+            print("Provide the IP directly: nano3ble dashboard <IP>")
+            return 1
+
+    ok = open_dashboard(ip, password=args.password)
+    return 0 if ok else 1
+
+
 # ── Argument parsing ──────────────────────────────────────────────────────
 
 
@@ -147,6 +175,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="EAP identity (default: 'none' for WPA-PSK)",
     )
 
+    db = sub.add_parser(
+        "dashboard",
+        help="Open the miner's web dashboard (bypasses QR login)",
+    )
+    db.add_argument(
+        "ip", nargs="?", default=None,
+        help="Miner IP address (auto-discovered via BLE if omitted)",
+    )
+    db.add_argument(
+        "--password", default="admin",
+        help="Web password (default: 'admin')",
+    )
+
     return p
 
 
@@ -163,6 +204,7 @@ def main() -> None:
         "status": _cmd_status,
         "wifi-scan": _cmd_wifi_scan,
         "set-wifi": _cmd_set_wifi,
+        "dashboard": _cmd_dashboard,
     }
 
     try:

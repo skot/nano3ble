@@ -44,6 +44,19 @@ nano3ble set-wifi --ssid "MyNetwork" --password "MyPassword"
 The tool connects over BLE, sends the credentials, and polls the miner
 until it reports a successful WiFi connection (or a failure).
 
+### Open the web dashboard
+
+```bash
+nano3ble dashboard 192.168.1.175
+nano3ble dashboard                    # auto-discover IP via BLE
+nano3ble dashboard 10.0.0.50 --password mypassword
+```
+
+Bypasses the QR-code login that normally requires the Avalon Family
+mobile app.  Opens the miner's login page in your browser and
+authenticates via the cgminer API — the page auto-redirects to the
+dashboard.
+
 ### Options
 
 | Flag | Description |

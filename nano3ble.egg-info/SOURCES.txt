@@ -4,6 +4,7 @@ pyproject.toml
 nano3ble/__init__.py
 nano3ble/__main__.py
 nano3ble/cli.py
+nano3ble/dashboard.py
 nano3ble/device.py
 nano3ble/protocol.py
 nano3ble.egg-info/PKG-INFO
