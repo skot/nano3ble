@@ -11,10 +11,8 @@ characteristics used for WiFi provisioning:
 Commands are ASCII strings terminated with the four-byte marker ``$$$$``.
 SSID, password, and identity fields are hex-encoded UTF-8.
 
-The firmware accumulates BLE writes in a 512-byte buffer and only
-processes the command once the ``$$$$`` terminator is received.  Writes
-must therefore be chunked to fit within the negotiated ATT MTU (typically
-20 bytes on BLE 4.0 devices).
+The firmware accumulates BLE writes until it receives the ``$$$$``
+terminator. Writes are chunked to fit the negotiated ATT payload size.
 """
 
 from __future__ import annotations
@@ -38,7 +36,7 @@ DEVICE_NAME_PREFIX = "nan3s"  # advertised as "nan3s_XXXX"
 # Framing
 # ---------------------------------------------------------------------------
 TERMINATOR = b"$$$$"
-MAX_WRITE_BUF = 512  # firmware-side accumulation buffer
+MAX_WRITE_BUF = 512  # compatibility limit for older firmware
 DEFAULT_CHUNK = 20   # safe for BLE 4.0 (ATT MTU 23 − 3 = 20)
 
 # ---------------------------------------------------------------------------
@@ -52,8 +50,8 @@ AUTH_WPA2_EAP = 8
 
 AUTH_NAMES: dict[int, str] = {
     1: "Open",
-    2: "Open",
-    3: "Open",
+    2: "WEP (open system)",
+    3: "WEP (shared key)",
     4: "802.1X",
     AUTH_WPA_PSK: "WPA-PSK",
     AUTH_WPA_EAP: "WPA-EAP",
@@ -88,6 +86,15 @@ def _str_to_hex(s: str) -> str:
 def _hex_to_str(h: str) -> str:
     """Decode a hex-encoded string back to UTF-8."""
     return bytes.fromhex(h).decode("utf-8", errors="replace")
+
+
+def decode_status_ssid(ssid: str) -> str:
+    """Decode the SDK's hex SSID and tolerate plain-text status values."""
+    try:
+        decoded = bytes.fromhex(ssid).decode("utf-8")
+    except ValueError:
+        return ssid
+    return decoded if decoded.isprintable() else ssid
 
 
 # ---------------------------------------------------------------------------
@@ -168,10 +175,11 @@ def parse_status(raw: bytes) -> dict[str, object]:
 
     Expected shape::
 
-        {"device":"nan3s_xxxx","ip":"…","ssid":"…","auth":N,"conn_state":N}
+        {"device":"nan3s_xxxx","ip":"…","ssid":"<hex SSID>","auth":N,"conn_state":N}
     """
-    text = raw.decode("ascii", errors="replace").rstrip("\x00")
+    text = raw.decode("utf-8", errors="replace").rstrip("\x00")
     try:
-        return json.loads(text)
+        status = json.loads(text)
     except json.JSONDecodeError:
         return {"raw": text}
+    return status if isinstance(status, dict) else {"raw": text}

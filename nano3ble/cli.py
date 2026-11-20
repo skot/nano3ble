@@ -7,7 +7,7 @@ Examples::
     nano3ble scan
     nano3ble status
     nano3ble wifi-scan
-    nano3ble set-wifi --ssid "MyNetwork" --password "hunter2"
+    nano3ble set-wifi --ssid "MyNetwork"
     nano3ble dashboard 192.168.1.175
     nano3ble dashboard                   # auto-discover IP via BLE
 """
@@ -16,12 +16,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import logging
+import math
 import sys
+import warnings
+
+from bleak.exc import BleakError
 
 from . import __version__
 from .dashboard import open_dashboard
-from .device import DeviceStatus, Nano3s, scan_devices
+from .device import DEFAULT_TIMEOUT, DeviceStatus, Nano3s, scan_devices
+from .protocol import AUTH_OPEN, AUTH_WPA2_PSK
 
 
 # ── Logging ───────────────────────────────────────────────────────────────
@@ -33,8 +39,8 @@ def _setup_logging(verbose: bool) -> None:
         format="%(message)s",
         stream=sys.stderr,
     )
-    if not verbose:
-        logging.getLogger("bleak").setLevel(logging.WARNING)
+    # Bleak's debug logs can include the Wi-Fi credentials in GATT writes.
+    logging.getLogger("bleak").setLevel(logging.WARNING)
 
 
 # ── Sub-commands ──────────────────────────────────────────────────────────
@@ -79,6 +85,18 @@ async def _cmd_wifi_scan(args: argparse.Namespace) -> int:
 
 
 async def _cmd_set_wifi(args: argparse.Namespace) -> int:
+    password = args.password
+    if password is None:
+        if args.auth == AUTH_OPEN:
+            password = ""
+        else:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                try:
+                    password = getpass.getpass("Wi-Fi password: ")
+                except (EOFError, getpass.GetPassWarning) as exc:
+                    raise RuntimeError("Run set-wifi from an interactive terminal.") from exc
+
     async with await Nano3s.connect(
         device_name=args.device, timeout=args.timeout
     ) as miner:
@@ -93,15 +111,18 @@ async def _cmd_set_wifi(args: argparse.Namespace) -> int:
         print(f"Configuring WiFi: SSID={args.ssid!r}")
         status: DeviceStatus = await miner.set_wifi(
             ssid=args.ssid,
-            password=args.password,
+            password=password,
             auth=args.auth,
             identity=args.identity,
         )
         print(f"\n{status}")
 
-        if status.is_connected:
+        if status.is_connected and status.has_ip:
             print(f"\n✓ Connected!  Miner IP: {status.ip}")
             return 0
+        if status.is_connected:
+            print("\nWi-Fi connected. The miner did not report an IP address in time.")
+            return 1
         print(f"\n✗ Connection {status.conn_state_name.lower()}.")
         return 1
 
@@ -117,7 +138,7 @@ async def _cmd_dashboard(args: argparse.Namespace) -> int:
                 device_name=args.device, timeout=args.timeout
             ) as miner:
                 status = await miner.get_status()
-                if not status.ip:
+                if not status.has_ip:
                     print("Miner is not connected to WiFi (no IP).")
                     return 1
                 ip = status.ip
@@ -127,7 +148,7 @@ async def _cmd_dashboard(args: argparse.Namespace) -> int:
             print("Provide the IP directly: nano3ble dashboard <IP>")
             return 1
 
-    ok = open_dashboard(ip, password=args.password)
+    ok = open_dashboard(ip, scheme=args.scheme)
     return 0 if ok else 1
 
 
@@ -144,8 +165,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("-v", "--verbose", action="store_true", help="Debug output")
     p.add_argument(
-        "-t", "--timeout", type=float, default=15.0,
-        help="BLE scan / connect timeout in seconds (default: 15)",
+        "-t", "--timeout", type=float, default=DEFAULT_TIMEOUT,
+        help=f"BLE scan / connect timeout in seconds (default: {DEFAULT_TIMEOUT:g})",
     )
     p.add_argument(
         "-d", "--device", default=None,
@@ -165,9 +186,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sw = sub.add_parser("set-wifi", help="Set WiFi credentials on the miner")
     sw.add_argument("--ssid", required=True, help="WiFi network name")
-    sw.add_argument("--password", required=True, help="WiFi password")
+    sw.add_argument("--password", help="Wi-Fi password (prompted securely if omitted)")
     sw.add_argument(
-        "--auth", type=int, default=7,
+        "--auth", type=int, default=AUTH_WPA2_PSK,
         help="Auth type (default: 7 = WPA2-PSK; use wifi-scan to check)",
     )
     sw.add_argument(
@@ -177,15 +198,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     db = sub.add_parser(
         "dashboard",
-        help="Open the miner's web dashboard (bypasses QR login)",
+        help="Open the miner's web login page",
     )
     db.add_argument(
         "ip", nargs="?", default=None,
         help="Miner IP address (auto-discovered via BLE if omitted)",
     )
     db.add_argument(
-        "--password", default="admin",
-        help="Web password (default: 'admin')",
+        "--scheme", choices=("http", "https"), default="https",
+        help="URL scheme (default: https; use http for older firmware)",
     )
 
     return p
@@ -197,6 +218,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("--timeout must be a positive, finite number of seconds")
     _setup_logging(args.verbose)
 
     handlers = {
@@ -212,7 +235,10 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nInterrupted.")
         rc = 130
-    except RuntimeError as exc:
+    except (TimeoutError, asyncio.TimeoutError):
+        print("Error: Bluetooth operation timed out. Try a longer --timeout.", file=sys.stderr)
+        rc = 1
+    except (BleakError, RuntimeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         rc = 1
 

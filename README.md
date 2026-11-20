@@ -1,119 +1,74 @@
 # nano3ble
 
-BLE WiFi provisioning tool for the **Avalon Nano3s** Bitcoin miner.
+Provision an **Avalon Nano3s** over Bluetooth LE without the Avalon Family app. Wi-Fi provisioning was tested on macOS with Canaan's Linux SDK `v1.1.2-alpha`.
 
-The Nano3s has no web UI for WiFi configuration — credentials must be
-sent over Bluetooth Low Energy.  This tool replaces the vendor's mobile
-app so you can provision the miner from any computer with a BLE adapter.
+## Install
 
-## Installation
+Use Python 3.10 or newer and a computer with Bluetooth LE. `nano3ble` uses Bleak, which supports macOS, Linux with BlueZ, and Windows. macOS may ask you to allow Bluetooth access for the app running Python. [Bleak platform requirements](https://bleak.readthedocs.io/en/latest/installation.html)
 
 ```bash
+git clone https://github.com/skot/nano3ble.git
 cd nano3ble
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+python -m pip install .
 ```
 
-## Usage
+On Windows, create the environment with `py -m venv .venv` and run `.venv\Scripts\python.exe -m pip install .`. Use `.venv\Scripts\nano3ble.exe` for the commands below.
 
-### Scan for miners
+## Set up Wi-Fi
+
+1. Power on the miner. On the Canaan SDK, a brief press of the recessed setup button starts provisioning if it is inactive.
+2. Run `nano3ble scan` and find the miner's name. It looks like `nan3s_aff2`.
+3. Scan for networks and set the credentials. The password prompt does not echo your input.
 
 ```bash
-nano3ble scan
+nano3ble --device nan3s_aff2 status
+nano3ble --device nan3s_aff2 wifi-scan
+nano3ble --device nan3s_aff2 set-wifi --ssid "MyNetwork"
 ```
 
-### Check device status
+`set-wifi` waits for the miner to report a connection and an IP address. WPA2-PSK is the default. Use `--auth 1` after `set-wifi` for an open network, or use `wifi-scan` to identify another supported authentication type. For enterprise Wi-Fi, supply an identity with `--identity`. Run `nano3ble set-wifi --help` for all options.
 
-```bash
-nano3ble status
-```
+Place global options like `--device` and `--timeout` before the command. The default Bluetooth scan and connection timeout is 30 seconds. If a connection times out, confirm the miner is in setup mode and try a longer `--timeout`.
 
-### List WiFi networks the miner can see
-
-```bash
-nano3ble wifi-scan
-```
-
-### Set WiFi credentials
-
-```bash
-nano3ble set-wifi --ssid "MyNetwork" --password "MyPassword"
-```
-
-The tool connects over BLE, sends the credentials, and polls the miner
-until it reports a successful WiFi connection (or a failure).
-
-### Open the web dashboard
+## Open the miner's web interface
 
 ```bash
 nano3ble dashboard 192.168.1.175
-nano3ble dashboard                    # auto-discover IP via BLE
-nano3ble dashboard 10.0.0.50 --password mypassword
+nano3ble --device nan3s_aff2 dashboard
+nano3ble dashboard --scheme http 192.168.1.175
 ```
 
-Bypasses the QR-code login that normally requires the Avalon Family
-mobile app.  Opens the miner's login page in your browser and
-authenticates via the cgminer API — the page auto-redirects to the
-dashboard.
+The command opens the miner's normal login page. It uses HTTPS by default for the Canaan Linux SDK. Use `--scheme http` for older firmware that serves HTTP. When Bluetooth provisioning is inactive, provide the IP shown on the miner's display.
 
-### Options
+## BLE protocol
 
-| Flag | Description |
-|---|---|
-| `-v` / `--verbose` | Enable debug logging |
-| `-t` / `--timeout` | BLE scan/connect timeout in seconds (default: 15) |
-| `-d` / `--device`  | Target a specific miner by name (e.g. `nan3s_aff2`) |
-| `--auth`            | WiFi auth type (default: 7 = WPA2-PSK) |
+The Nano3s exposes GATT service `FFFF` with three provisioning characteristics.
 
-## How it works
+| UUID | Direction | Purpose |
+| --- | --- | --- |
+| `FFE1` | Read | Wi-Fi scan results |
+| `FFE2` | Write | Commands |
+| `FFE3` | Read | Wi-Fi status as JSON |
 
-The Nano3s exposes a custom BLE GATT service (`0xFFFF`) with three
-characteristics:
+Commands are terminated with `$$$$`. The client splits writes to fit the negotiated BLE payload size and keeps a 512-byte command limit for older firmware. The Canaan Linux SDK allocates a 1,024-byte receive buffer. The SSID, password, and identity are encoded as hexadecimal. The SDK also returns the status SSID as hexadecimal.
 
-| UUID   | Direction | Purpose |
-|--------|-----------|---------|
-| `FFE1` | Read      | WiFi scan results (hex-encoded SSIDs) |
-| `FFE2` | Write     | Command input |
-| `FFE3` | Read      | Device status (JSON) |
-
-Commands are ASCII strings terminated with `$$$$`.  The firmware
-accumulates BLE writes in a 512-byte buffer and only processes them once
-the terminator is received.  Because the BLE ATT MTU is typically 20
-bytes, writes are automatically chunked.
-
-### Protocol
-
-**Scan WiFi:**
-```
+```text
 scan$$$$
-```
-
-**Set WiFi (WPA2-PSK):**
-```
 setssid,<hex_ssid>,<hex_password>,<hex_identity>,<auth>$$$$
 ```
 
-All string fields are hex-encoded UTF-8.  For WPA-PSK networks the
-identity field is set to `"none"` (hex `6e6f6e65`).
+For WPA-PSK, the identity defaults to `none`. The status codes are `0` disconnected, `1` connecting, `2` connected, and `3` failed.
 
-### Connection states
+## Development
 
-| Value | Meaning |
-|-------|---------|
-| 0     | Disconnected |
-| 1     | Connecting |
-| 2     | Connected |
-| 3     | Failed |
+```bash
+python -m pip install -e .
+python -m unittest discover -s tests
+```
 
-BLE advertising stops approximately 90 seconds after a successful WiFi
-connection.  Power-cycle the miner to re-enable BLE.
-
-## Requirements
-
-- Python 3.10+
-- A Bluetooth Low Energy adapter (built-in on most laptops)
-- macOS, Linux, or Windows (via [bleak](https://github.com/hbldh/bleak))
+The unit tests use simulated BLE devices and run without a miner.
 
 ## License
 

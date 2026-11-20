@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=68.0", "setuptools-scm"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nano3ble"
-version = "0.1.0"
-description = "BLE WiFi provisioning tool for the Avalon Nano3s Bitcoin miner"
+dynamic = ["version"]
+description = "BLE Wi-Fi provisioning tool for the Avalon Nano3s Bitcoin miner"
 readme = "README.md"
-license = { text = "GPL-3.0-or-later" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "bleak>=0.21.0",
@@ -15,3 +16,13 @@ dependencies = [
 
 [project.scripts]
 nano3ble = "nano3ble.cli:main"
+
+[project.urls]
+Repository = "https://github.com/skot/nano3ble"
+Issues = "https://github.com/skot/nano3ble/issues"
+
+[tool.setuptools.packages.find]
+include = ["nano3ble"]
+
+[tool.setuptools.dynamic]
+version = { attr = "nano3ble.__version__" }

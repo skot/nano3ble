@@ -1,2 +1,0 @@
-[console_scripts]
-nano3ble = nano3ble.cli:main
